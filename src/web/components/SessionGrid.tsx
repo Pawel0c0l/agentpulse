@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { compareOperational, getOperationalStatus } from "../../shared/session-state.js";
 import type { Session } from "../../shared/types.js";
 import { type SessionIntelligence, api } from "../lib/api.js";
-import { extractProjectName, parseDate } from "../lib/utils.js";
+import { extractProjectName } from "../lib/utils.js";
 import { SessionCard } from "./SessionCard.js";
 
 interface SessionGridProps {
@@ -96,23 +97,16 @@ export function SessionGrid({ sessions, isLoading, filter }: SessionGridProps) {
 		);
 	}
 
-	// Sort: pinned first, then active, then by last activity
+	// Sort: pinned first, then operational status (waiting → error → working →
+	// idle → completed), then by last activity.
 	const sorted = [...sessions].sort((a, b) => {
 		if (a.isPinned && !b.isPinned) return -1;
 		if (!a.isPinned && b.isPinned) return 1;
-		const statusOrder: Record<string, number> = {
-			active: 0,
-			idle: 1,
-			completed: 2,
-			failed: 3,
-			archived: 4,
-		};
-		const statusDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
-		if (statusDiff !== 0) return statusDiff;
-		return parseDate(b.lastActivityAt) - parseDate(a.lastActivityAt);
+		return compareOperational(a, b);
 	});
 
-	// Group by project
+	// Group by project. Insertion order follows `sorted`, so the project that
+	// holds the most urgent session comes first.
 	const groups = new Map<string, Session[]>();
 	for (const session of sorted) {
 		const project = session.cwd || "Unknown";
@@ -121,8 +115,8 @@ export function SessionGrid({ sessions, isLoading, filter }: SessionGridProps) {
 		groups.set(project, existing);
 	}
 
-	// If only 1 project or few sessions, show flat grid
-	if (groups.size <= 1 || sessions.length <= 4) {
+	// Single project: flat grid.
+	if (groups.size <= 1) {
 		return (
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
 				{sorted.map((session) => (
@@ -139,28 +133,42 @@ export function SessionGrid({ sessions, isLoading, filter }: SessionGridProps) {
 	// Multiple projects: group them
 	return (
 		<div className="space-y-5 md:space-y-6">
-			{Array.from(groups.entries()).map(([project, projectSessions]) => (
-				<div key={project}>
-					<div className="flex flex-col items-start gap-1.5 mb-3 md:flex-row md:items-center md:gap-2">
-						<h3 className="text-sm font-semibold text-foreground">{extractProjectName(project)}</h3>
-						<span className="text-xs text-muted-foreground">
-							{projectSessions.length} session{projectSessions.length !== 1 ? "s" : ""}
-						</span>
-						<span className="text-[10px] text-muted-foreground break-all md:truncate md:max-w-xs">
-							{project}
-						</span>
+			{Array.from(groups.entries()).map(([project, projectSessions]) => {
+				const waiting = projectSessions.filter((s) => getOperationalStatus(s) === "waiting").length;
+				const working = projectSessions.filter((s) => getOperationalStatus(s) === "working").length;
+				return (
+					<div key={project}>
+						<div className="flex flex-col items-start gap-1.5 mb-3 md:flex-row md:items-center md:gap-2">
+							<h3 className="text-sm font-semibold text-foreground">
+								{extractProjectName(project)}
+							</h3>
+							<span className="text-xs text-muted-foreground">
+								{projectSessions.length} session{projectSessions.length !== 1 ? "s" : ""}
+							</span>
+							{waiting > 0 && (
+								<span className="text-[10px] font-semibold uppercase tracking-wide text-amber-300 bg-amber-500/15 border border-amber-500/20 rounded px-1.5 py-0">
+									{waiting} waiting for you
+								</span>
+							)}
+							{working > 0 && (
+								<span className="text-[10px] font-medium text-emerald-400">{working} working</span>
+							)}
+							<span className="text-[10px] text-muted-foreground break-all md:truncate md:max-w-xs">
+								{project}
+							</span>
+						</div>
+						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
+							{projectSessions.map((session) => (
+								<SessionCard
+									key={session.sessionId}
+									session={session}
+									intelligence={intelligence[session.sessionId]}
+								/>
+							))}
+						</div>
 					</div>
-					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
-						{projectSessions.map((session) => (
-							<SessionCard
-								key={session.sessionId}
-								session={session}
-								intelligence={intelligence[session.sessionId]}
-							/>
-						))}
-					</div>
-				</div>
-			))}
+				);
+			})}
 		</div>
 	);
 }

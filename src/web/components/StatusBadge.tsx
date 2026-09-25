@@ -11,7 +11,25 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; dot?: string; gl
 	completed: { bg: "bg-slate-500/12", text: "text-slate-400" },
 	failed: { bg: "bg-red-500/12", text: "text-red-400" },
 	archived: { bg: "bg-zinc-500/10", text: "text-zinc-500" },
+	// Operational statuses (see shared/session-state.ts getOperationalStatus).
+	// "waiting" is the "needs me" signal, so it gets the loudest treatment.
+	working: {
+		bg: "bg-emerald-500/12",
+		text: "text-emerald-400",
+		dot: "bg-emerald-400",
+		glow: "glow-status-active",
+	},
+	waiting: {
+		bg: "bg-amber-500/15",
+		text: "text-amber-300",
+		dot: "bg-amber-400",
+		glow: "glow-status-active",
+	},
+	error: { bg: "bg-red-500/12", text: "text-red-400" },
 };
+
+/** Statuses that render the pulsing live dot. */
+const LIVE_STATUSES = new Set(["active", "working", "waiting"]);
 
 const SEMANTIC_STYLES: Record<string, { bg: string; text: string }> = {
 	researching: { bg: "bg-blue-500/12", text: "text-blue-400" },
@@ -37,7 +55,7 @@ export function StatusBadge({ status, variant = "session", className }: StatusBa
 			: STATUS_STYLES[status] || { bg: "bg-slate-500/12", text: "text-slate-400" };
 
 	const sessionStyle = variant === "session" ? STATUS_STYLES[status] : undefined;
-	const isActive = status === "active";
+	const isActive = LIVE_STATUSES.has(status);
 
 	return (
 		<span

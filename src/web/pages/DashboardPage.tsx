@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { isArchivedSession, isVisibleSession } from "../../shared/session-state.js";
+import {
+	compareOperational,
+	getOperationalStatus,
+	isArchivedSession,
+	isVisibleSession,
+	needsAttention,
+} from "../../shared/session-state.js";
 import { FirstRunWelcome } from "../components/FirstRunWelcome.js";
 import { SessionGrid } from "../components/SessionGrid.js";
 import { StatCard } from "../components/StatCard.js";
 import { useSessions } from "../hooks/useSessions.js";
-import { cn, formatDuration, parseDate } from "../lib/utils.js";
+import { cn, formatDuration } from "../lib/utils.js";
 import { useProjectsStore } from "../stores/projects-store.js";
 import { useUiPrefsStore } from "../stores/ui-prefs-store.js";
 
@@ -65,14 +71,14 @@ export function DashboardPage() {
 		);
 	}
 
+	// Live strip: sessions the lifecycle still considers active, ordered so the
+	// ones that need a human (permission wait, error) come first, then working.
 	const activeSessions = useMemo(
-		() =>
-			visibleSessions
-				.filter((s) => s.status === "active")
-				.sort((a, b) => parseDate(b.lastActivityAt) - parseDate(a.lastActivityAt)),
+		() => visibleSessions.filter((s) => s.status === "active").sort(compareOperational),
 		[visibleSessions],
 	);
-	const workingCount = visibleSessions.filter((s) => s.isWorking).length;
+	const workingCount = visibleSessions.filter((s) => getOperationalStatus(s) === "working").length;
+	const needsYouCount = visibleSessions.filter(needsAttention).length;
 	const selectedActiveSession =
 		activeSessions.find((session) => session.sessionId === selectedActiveSessionId) ??
 		activeSessions[0] ??
@@ -129,7 +135,13 @@ export function DashboardPage() {
 				<StatCard
 					label="Active Sessions"
 					value={stats?.activeSessions ?? 0}
-					sub={workingCount > 0 ? `${workingCount} working now` : undefined}
+					sub={
+						needsYouCount > 0
+							? `${needsYouCount} need you · ${workingCount} working`
+							: workingCount > 0
+								? `${workingCount} working now`
+								: undefined
+					}
 				/>
 				<StatCard label="Sessions Today" value={stats?.totalSessionsToday ?? 0} />
 				<StatCard label="Tool Uses Today" value={stats?.totalToolUsesToday ?? 0} />
@@ -254,6 +266,11 @@ export function DashboardPage() {
 							</div>
 							<div className="text-xs text-muted-foreground">
 								{activeSessions.length} active · {workingCount} working
+								{needsYouCount > 0 && (
+									<span className="ml-1 font-semibold text-amber-300">
+										· {needsYouCount} need you
+									</span>
+								)}
 							</div>
 						</div>
 					</div>
@@ -263,6 +280,7 @@ export function DashboardPage() {
 							{activeSessions.map((session) => {
 								const label = session.displayName || session.sessionId.slice(0, 8);
 								const isSelected = session.sessionId === selectedActiveSession?.sessionId;
+								const opStatus = getOperationalStatus(session);
 								return (
 									<button
 										key={session.sessionId}
@@ -276,9 +294,15 @@ export function DashboardPage() {
 									>
 										<div className="flex items-center gap-2">
 											<span className="truncate text-sm font-medium">{label}</span>
-											{session.isWorking && (
-												<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
+											{opStatus === "waiting" && (
+												<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-300">
 													<span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse-dot" />
+													Waiting
+												</span>
+											)}
+											{opStatus === "working" && (
+												<span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+													<span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-dot" />
 													Working
 												</span>
 											)}
@@ -303,7 +327,11 @@ export function DashboardPage() {
 								</div>
 								<div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
 									<div>
-										<span className="text-foreground">Status:</span> {selectedActiveSession.status}
+										<span className="text-foreground">Status:</span>{" "}
+										{getOperationalStatus(selectedActiveSession)}
+										{selectedActiveSession.currentTask && (
+											<span className="ml-1 truncate">· {selectedActiveSession.currentTask}</span>
+										)}
 									</div>
 									<div>
 										<span className="text-foreground">Last activity:</span>{" "}

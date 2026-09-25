@@ -2,6 +2,7 @@ import { Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { getOperationalStatus } from "../../shared/session-state.js";
 import type { Session } from "../../shared/types.js";
 import { type SessionIntelligence, api } from "../lib/api.js";
 import { extractProjectName, formatDuration, getSessionMode, projectColor } from "../lib/utils.js";
@@ -63,6 +64,7 @@ export function SessionCard({ session, intelligence }: SessionCardProps) {
 	// since the optimistic update no longer writes status:'archived' to the store.
 	const isInactive =
 		session.status === "completed" || session.status === "failed" || session.isArchived;
+	const opStatus = getOperationalStatus(session);
 	const modeStyle = getSessionMode(session);
 	const projectColorsEnabled = useUiPrefsStore((s) => s.projectColors);
 	// Deterministic tint per project so sessions in the same repo
@@ -135,7 +137,7 @@ export function SessionCard({ session, intelligence }: SessionCardProps) {
 			}
 			className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-card p-3 md:p-4 pl-4 md:pl-5 transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 ${
 				session.isPinned ? "border-amber-500/30 bg-amber-500/[0.02]" : "border-border"
-			} ${isScratch ? "border-dashed" : ""}`}
+			} ${isScratch ? "border-dashed" : ""} ${isInactive ? "opacity-60 hover:opacity-100" : ""}`}
 		>
 			{/* Mode accent bar */}
 			<div
@@ -176,19 +178,6 @@ export function SessionCard({ session, intelligence }: SessionCardProps) {
 							)}
 							{name}
 						</span>
-					)}
-					{session.semanticStatus === "waiting" ? (
-						<span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
-							<span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse-dot" />
-							waiting
-						</span>
-					) : (
-						session.isWorking && (
-							<span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
-								<span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse-dot" />
-								working
-							</span>
-						)
 					)}
 				</div>
 				<div className="flex items-center gap-1 flex-shrink-0">
@@ -347,7 +336,9 @@ export function SessionCard({ session, intelligence }: SessionCardProps) {
 					</div>
 					{/* Slice G: derive effective status from isArchived so the badge
 					    shows "ARCHIVED" immediately on archive, before the next poll. */}
-					<StatusBadge status={session.isArchived ? "archived" : session.status} />
+					{/* Operational status (WORKING / WAITING / IDLE / ERROR / COMPLETED)
+					    replaces the lifecycle status + separate working/waiting chip. */}
+					<StatusBadge status={session.isArchived ? "archived" : opStatus} />
 				</div>
 			</div>
 
@@ -430,7 +421,12 @@ export function SessionCard({ session, intelligence }: SessionCardProps) {
 					{modeStyle.label}
 				</span>
 				{intelligenceEnabled && intelligence && <IntelligenceBadge intelligence={intelligence} />}
-				<span className="text-xs text-muted-foreground">{formatDuration(session.startedAt)}</span>
+				<span
+					className="text-xs text-muted-foreground"
+					title={`Last activity ${session.lastActivityAt} · started ${session.startedAt}`}
+				>
+					{formatDuration(session.lastActivityAt)} ago
+				</span>
 				<span className="text-xs text-muted-foreground ml-auto">{session.totalToolUses} tools</span>
 			</div>
 
