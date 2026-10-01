@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { isArchivedSession, isVisibleSession } from "../../shared/session-state.js";
+import {
+	ACTIVE_OPERATIONAL_STATUSES,
+	type ActiveOperationalStatus,
+	compareOperational,
+	countOperationalStatuses,
+	filterByOperationalStatus,
+	getOperationalStatus,
+	isActiveOperationalSession,
+	isArchivedSession,
+	isVisibleSession,
+} from "../../shared/session-state.js";
 import { FirstRunWelcome } from "../components/FirstRunWelcome.js";
 import { SessionGrid } from "../components/SessionGrid.js";
 import { StatCard } from "../components/StatCard.js";
+import { StatusBadge } from "../components/StatusBadge.js";
 import { useSessions } from "../hooks/useSessions.js";
-import { cn, formatDuration, parseDate } from "../lib/utils.js";
+import { cn, formatDuration } from "../lib/utils.js";
 import { useProjectsStore } from "../stores/projects-store.js";
 import { useUiPrefsStore } from "../stores/ui-prefs-store.js";
 
@@ -32,6 +43,9 @@ export function DashboardPage() {
 	);
 
 	const [filter, setFilter] = useState<string>("active");
+	// Single-select operational status filter, driven by the four status cards.
+	// Only meaningful on the Active tab; selecting a card switches to it.
+	const [statusFilter, setStatusFilter] = useState<ActiveOperationalStatus | null>(null);
 	const [search, setSearch] = useState("");
 	const [selectedActiveSessionId, setSelectedActiveSessionId] = useState<string | null>(null);
 
@@ -43,15 +57,32 @@ export function DashboardPage() {
 		[sessions, showScratch, scratchProjectIds],
 	);
 
-	// Filter by status.
+	// The active operational set: not ended, not completed, not archived. Every
+	// operational surface on this page (status cards, counts, filter, live
+	// strip) is computed from this one list with the shared classifier, so
+	// they can never disagree. Lifecycle `idle` rows (inactivity sweep) are
+	// still active here — they classify as WAITING / IDLE like on Android.
+	const operationalSessions = useMemo(
+		() => visibleSessions.filter(isActiveOperationalSession),
+		[visibleSessions],
+	);
+	const counts = useMemo(
+		() => countOperationalStatuses(operationalSessions),
+		[operationalSessions],
+	);
+
+	// Filter by tab, then by operational status.
 	// 'archived' tab is a UI tab id mapped to isArchived=true — not a SessionStatus value.
 	// Slice G: isArchived is the canonical archive truth; status='archived' is legacy.
+	// 'active' tab is the operational set, narrowed by the selected status card.
 	let filtered =
 		filter === "all"
 			? visibleSessions.filter(isVisibleSession)
 			: filter === "archived"
 				? visibleSessions.filter(isArchivedSession)
-				: visibleSessions.filter((s) => s.status === filter);
+				: filter === "active"
+					? filterByOperationalStatus(operationalSessions, statusFilter)
+					: visibleSessions.filter((s) => s.status === filter);
 
 	// Filter by search
 	if (search.trim()) {
@@ -65,14 +96,23 @@ export function DashboardPage() {
 		);
 	}
 
+	// Live strip: the active operational set, ordered so the ones that need a
+	// human (waiting, error) come first, then working, then idle.
 	const activeSessions = useMemo(
-		() =>
-			visibleSessions
-				.filter((s) => s.status === "active")
-				.sort((a, b) => parseDate(b.lastActivityAt) - parseDate(a.lastActivityAt)),
-		[visibleSessions],
+		() => [...operationalSessions].sort(compareOperational),
+		[operationalSessions],
 	);
-	const workingCount = visibleSessions.filter((s) => s.isWorking).length;
+	const workingCount = counts.working;
+	const needsYouCount = counts.waiting + counts.error;
+
+	function toggleStatusFilter(status: ActiveOperationalStatus) {
+		setFilter("active");
+		setStatusFilter((current) => (current === status ? null : status));
+	}
+	function selectTab(tab: string) {
+		setFilter(tab);
+		if (tab !== "active") setStatusFilter(null);
+	}
 	const selectedActiveSession =
 		activeSessions.find((session) => session.sessionId === selectedActiveSessionId) ??
 		activeSessions[0] ??
@@ -124,12 +164,35 @@ export function DashboardPage() {
 				</div>
 			</div>
 
-			{/* KPI Row */}
+			{/* Operational status cards — the four states every active session is
+			    in exactly one of, counted over the full active set. Clicking a card
+			    is a single-select filter on the grid below; click again to clear. */}
+			<div className="grid grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 mb-3 md:mb-4">
+				{ACTIVE_OPERATIONAL_STATUSES.map((status) => (
+					<StatCard
+						key={status}
+						label={STATUS_CARD_LABEL[status]}
+						value={counts[status]}
+						sub={statusFilter === status ? "Showing only these · click to clear" : undefined}
+						tone={STATUS_CARD_TONE[status]}
+						selected={statusFilter === status}
+						onClick={() => toggleStatusFilter(status)}
+					/>
+				))}
+			</div>
+
+			{/* Informational KPI Row (not operational states) */}
 			<div className="grid grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-6">
 				<StatCard
 					label="Active Sessions"
 					value={stats?.activeSessions ?? 0}
-					sub={workingCount > 0 ? `${workingCount} working now` : undefined}
+					sub={
+						needsYouCount > 0
+							? `${needsYouCount} need you · ${workingCount} working`
+							: workingCount > 0
+								? `${workingCount} working now`
+								: undefined
+					}
 				/>
 				<StatCard label="Sessions Today" value={stats?.totalSessionsToday ?? 0} />
 				<StatCard label="Tool Uses Today" value={stats?.totalToolUsesToday ?? 0} />
@@ -140,19 +203,23 @@ export function DashboardPage() {
 			<div className="flex flex-col gap-3 mb-4">
 				<div className="flex gap-1 bg-muted rounded-lg p-1 overflow-x-auto scrollbar-none">
 					{/* 'archived' here is a UI tab id, mapped to isArchived=true in the
-					    filter logic above — not a SessionStatus value (Slice G). */}
-					{["active", "idle", "completed", "archived", "all"].map((f) => {
+					    filter logic above — not a SessionStatus value (Slice G).
+					    'active' is the operational set; the lifecycle 'idle' tab is gone
+					    because IDLE is now an operational state (status card above). */}
+					{["active", "completed", "archived", "all"].map((f) => {
 						const count =
 							f === "all"
 								? visibleSessions.filter(isVisibleSession).length
 								: f === "archived"
 									? visibleSessions.filter(isArchivedSession).length
-									: visibleSessions.filter((s) => s.status === f).length;
+									: f === "active"
+										? operationalSessions.length
+										: visibleSessions.filter((s) => s.status === f).length;
 						return (
 							<button
 								key={f}
 								type="button"
-								onClick={() => setFilter(f)}
+								onClick={() => selectTab(f)}
 								className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
 									filter === f
 										? "bg-background text-foreground shadow-sm"
@@ -254,6 +321,11 @@ export function DashboardPage() {
 							</div>
 							<div className="text-xs text-muted-foreground">
 								{activeSessions.length} active · {workingCount} working
+								{needsYouCount > 0 && (
+									<span className="ml-1 font-semibold text-amber-300">
+										· {needsYouCount} need you
+									</span>
+								)}
 							</div>
 						</div>
 					</div>
@@ -263,6 +335,7 @@ export function DashboardPage() {
 							{activeSessions.map((session) => {
 								const label = session.displayName || session.sessionId.slice(0, 8);
 								const isSelected = session.sessionId === selectedActiveSession?.sessionId;
+								const opStatus = getOperationalStatus(session);
 								return (
 									<button
 										key={session.sessionId}
@@ -276,12 +349,9 @@ export function DashboardPage() {
 									>
 										<div className="flex items-center gap-2">
 											<span className="truncate text-sm font-medium">{label}</span>
-											{session.isWorking && (
-												<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
-													<span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse-dot" />
-													Working
-												</span>
-											)}
+											{/* Same classifier and badge as the session cards, so the
+											    strip never disagrees with the grid (all four states). */}
+											<StatusBadge status={opStatus} className="shrink-0" />
 										</div>
 										<div className="mt-1 truncate text-[11px] text-muted-foreground">
 											{session.cwd?.split("/").pop() || "No project"}
@@ -303,7 +373,11 @@ export function DashboardPage() {
 								</div>
 								<div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
 									<div>
-										<span className="text-foreground">Status:</span> {selectedActiveSession.status}
+										<span className="text-foreground">Status:</span>{" "}
+										{getOperationalStatus(selectedActiveSession)}
+										{selectedActiveSession.currentTask && (
+											<span className="ml-1 truncate">· {selectedActiveSession.currentTask}</span>
+										)}
 									</div>
 									<div>
 										<span className="text-foreground">Last activity:</span>{" "}
@@ -335,7 +409,26 @@ export function DashboardPage() {
 			)}
 
 			{/* Session Grid */}
-			<SessionGrid sessions={filtered} isLoading={isLoading} filter={filter} />
+			<SessionGrid
+				sessions={filtered}
+				isLoading={isLoading}
+				filter={filter === "active" && statusFilter ? statusFilter : filter}
+			/>
 		</div>
 	);
 }
+
+const STATUS_CARD_LABEL: Record<ActiveOperationalStatus, string> = {
+	waiting: "Waiting",
+	working: "Working",
+	idle: "Idle",
+	error: "Error",
+};
+
+/** ERROR strongest, WAITING attention, WORKING active, IDLE neutral (see StatusBadge). */
+const STATUS_CARD_TONE: Record<ActiveOperationalStatus, "warn" | "danger" | "success" | "muted"> = {
+	waiting: "warn",
+	working: "success",
+	idle: "muted",
+	error: "danger",
+};
