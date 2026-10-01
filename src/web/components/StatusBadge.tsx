@@ -7,12 +7,15 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; dot?: string; gl
 		dot: "bg-emerald-400",
 		glow: "glow-status-active",
 	},
-	idle: { bg: "bg-amber-500/12", text: "text-amber-400", dot: "bg-amber-400" },
+	// "idle" is shared by the lifecycle status and the operational status
+	// (acknowledged, nothing to do). Neutral slate on purpose: visibly distinct
+	// from WORKING (emerald) but lower-attention than WAITING / ERROR.
+	idle: { bg: "bg-slate-500/12", text: "text-slate-400", dot: "bg-slate-400" },
 	completed: { bg: "bg-slate-500/12", text: "text-slate-400" },
 	failed: { bg: "bg-red-500/12", text: "text-red-400" },
 	archived: { bg: "bg-zinc-500/10", text: "text-zinc-500" },
 	// Operational statuses (see shared/session-state.ts getOperationalStatus).
-	// "waiting" is the "needs me" signal, so it gets the loudest treatment.
+	// Attention order: error (strongest) > waiting (needs me) > working > idle.
 	working: {
 		bg: "bg-emerald-500/12",
 		text: "text-emerald-400",

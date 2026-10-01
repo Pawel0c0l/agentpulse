@@ -59,21 +59,15 @@ export function SessionGrid({ sessions, isLoading, filter }: SessionGridProps) {
 	}
 
 	if (sessions.length === 0) {
-		const emptyHeading =
-			filter === "archived"
-				? "No archived sessions"
-				: filter === "completed"
-					? "No completed sessions"
-					: filter === "active"
-						? "No active sessions"
-						: filter === "idle"
-							? "No idle sessions"
-							: "No sessions yet";
+		// `filter` is a tab id (active / completed / archived / all) or one of the
+		// operational statuses (waiting / working / idle / error) when a status
+		// card is selected; both read naturally as "No <filter> sessions".
+		const emptyHeading = filter && filter !== "all" ? `No ${filter} sessions` : "No sessions yet";
 		const emptySub =
 			filter === "archived"
 				? "Archived sessions will appear here once you archive them."
 				: filter && filter !== "all"
-					? "Try switching to a different filter tab."
+					? "Try a different status card or filter tab."
 					: "Start an agent session to see it here. Follow the setup guide to wire up your first hook.";
 		return (
 			<div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
