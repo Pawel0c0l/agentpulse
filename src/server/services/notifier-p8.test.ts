@@ -34,6 +34,8 @@ function makeSession(id: string): Session {
 		metadata: {},
 		projectId: null,
 		isArchived: false,
+		lastAgentTurnCompletedAt: null,
+		lastUserAcknowledgedAt: null,
 	};
 }
 

@@ -208,7 +208,19 @@ export type CodexEvent =
 	| "PreCompact"
 	| "PostCompact";
 
-export type HookEventType = ClaudeCodeEvent | CodexEvent;
+// Synthetic events produced by AgentPulse's own tooling (not by a CLI hook),
+// delivered through the same POST /api/v1/hooks ingestion path. Kept out of
+// the ClaudeCodeEvent/CodexEvent unions on purpose: those lists are mirrored
+// into hook-setup templates (check-hook-event-parity), and nobody configures
+// a CLI hook for these.
+//
+//   UserAcknowledge — the user acknowledged the latest finished agent turn
+//   without starting new work (today: a successful Claude Code `/copy`,
+//   detected by the relay's transcript watcher). Carries `source` and
+//   `acknowledged_at` (hook-side ISO timestamp, informational).
+export type AgentPulseSyntheticEvent = "UserAcknowledge";
+
+export type HookEventType = ClaudeCodeEvent | CodexEvent | AgentPulseSyntheticEvent;
 
 // Raw hook event payload (union of fields from both agents)
 export interface HookEventPayload {
@@ -247,6 +259,10 @@ export interface HookEventPayload {
 
 	// Compaction events (PreCompact/PostCompact)
 	trigger?: string;
+
+	// UserAcknowledge (synthetic): when the acknowledgement happened on the
+	// client, e.g. the transcript record timestamp of a successful /copy.
+	acknowledged_at?: string;
 }
 
 // Semantic status update from CLAUDE.md snippet
@@ -266,6 +282,8 @@ export type EventCategory =
 	| "status_update"
 	| "system_event"
 	| "permission_event"
+	// User acknowledged the latest finished turn (UserAcknowledge).
+	| "user_ack"
 	// AI watcher categories (only present when the AI feature is enabled)
 	| "ai_proposal_pending"
 	| "ai_proposal"
@@ -333,6 +351,17 @@ export interface Session {
 	metadata: Record<string, unknown>;
 	projectId: string | null;
 	isArchived: boolean;
+	/**
+	 * Acknowledgement model. `lastAgentTurnCompletedAt` is set on every Stop;
+	 * `lastUserAcknowledgedAt` on every UserPromptSubmit and UserAcknowledge.
+	 * Both are server receive-time ISO timestamps so they compare against each
+	 * other; both are null for sessions that predate the columns or have not
+	 * seen the event yet. A finished turn newer than the acknowledgement means
+	 * the user has not looked at the result (WAITING); otherwise the session is
+	 * IDLE when not working.
+	 */
+	lastAgentTurnCompletedAt: string | null;
+	lastUserAcknowledgedAt: string | null;
 	managedSession?: ManagedSession | null;
 	/**
 	 * Cheap presence flag: true when a managed_sessions row exists for this

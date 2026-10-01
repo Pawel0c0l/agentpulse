@@ -157,6 +157,19 @@ export function normalizeHookEvent(
 			toolResponse,
 			rawPayload: payload as unknown as Record<string, unknown>,
 		});
+	} else if (eventType === "UserAcknowledge") {
+		normalized.push({
+			eventType,
+			category: "user_ack",
+			source: "observed_hook",
+			content: payload.source ? `Acknowledged by user (${payload.source})` : "Acknowledged by user",
+			isNoise: false,
+			providerEventType: eventType,
+			toolName: null,
+			toolInput: null,
+			toolResponse: null,
+			rawPayload: payload as unknown as Record<string, unknown>,
+		});
 	} else if (eventType === "PermissionRequest" || eventType === "PermissionDenied") {
 		normalized.push({
 			eventType,

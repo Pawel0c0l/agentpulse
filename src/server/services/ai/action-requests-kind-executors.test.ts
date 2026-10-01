@@ -38,6 +38,8 @@ function makeSession(sessionId: string) {
 			isWorking: false,
 			isPinned: false,
 			isArchived: false,
+			lastAgentTurnCompletedAt: null,
+			lastUserAcknowledgedAt: null,
 			totalToolUses: 0,
 		});
 }

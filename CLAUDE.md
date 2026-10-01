@@ -121,7 +121,7 @@ Agent (Claude Code / Codex)
 
 Schema is split across `src/server/db/schema/{core,ai,ask-projects}/` with per-table files and a column-factory pattern for dual-dialect differences. Per-dialect entry files (`schema/sqlite.ts`, `schema/postgres.ts`) export the canonical table set for each backend. The runtime barrel (`schema/index.ts`) reads `config.dialect` at module load and selects the appropriate per-dialect barrel; all production importers use it (the legacy `db/schema.ts` shim is deleted, guarded by `scripts/check-no-legacy-schema-import.ts`). Exports are currently cast to SQLite-typed variants for backwards type-compat; narrowing to dual-dialect generics is a follow-up.
 
-- `sessions` - id, session_id, display_name, agent_type, status, cwd, model, is_working, is_pinned, git_branch, notes, semantic_status, current_task, plan_summary, total_tool_uses, metadata, timestamps, is_archived. Note: `is_archived` is the canonical archive predicate; `status='archived'` is a legacy value retained for backwards-compat (see `src/shared/session-state.ts`).
+- `sessions` - id, session_id, display_name, agent_type, status, cwd, model, is_working, is_pinned, git_branch, notes, semantic_status, current_task, plan_summary, total_tool_uses, metadata, timestamps, is_archived, last_agent_turn_completed_at, last_user_acknowledged_at. Note: `is_archived` is the canonical archive predicate; `status='archived'` is a legacy value retained for backwards-compat (see `src/shared/session-state.ts`). The two nullable acknowledgement timestamps (drizzle migration 0003 + legacy ALTER) back the WAITING-vs-IDLE distinction consumed by clients: `last_agent_turn_completed_at` is stamped on Stop, `last_user_acknowledged_at` on UserPromptSubmit and on the synthetic `UserAcknowledge` hook (server receive time for both, so they compare).
 - `events` - id, session_id, event_type, tool_name, tool_input, tool_response, raw_payload, created_at
 - `api_keys` - id, name, key_hash, key_prefix, is_active, scopes (JSON text, default `'["ingest"]'`), timestamps
 - `settings` - key, value, updated_at
@@ -184,7 +184,7 @@ Claude Code blocks hooks to non-localhost IPs. The relay (`scripts/relay.ts`) ru
 - `GET /setup-relay.sh` - Self-contained relay + hook setup script
 
 **Hook ingestion (API key when auth enabled):**
-- `POST /api/v1/hooks` - Receive hook events from Claude Code / Codex (always returns 200; rate-limited drops are silent, counter exposed in /health)
+- `POST /api/v1/hooks` - Receive hook events from Claude Code / Codex (always returns 200; rate-limited drops are silent, counter exposed in /health). Also accepts the synthetic `UserAcknowledge` event (`{ hook_event_name: "UserAcknowledge", session_id, transcript_path?, cwd?, source: "copy", acknowledged_at }`, sent by the relay's Claude transcript watcher on a successful `/copy`): it stamps `lastUserAcknowledgedAt`, stores a `user_ack` event, never sets `isWorking`, never creates/reanimates a session, and never clears a permission wait.
 - `POST /api/v1/hooks/status` - Receive semantic status updates
 
 **Internal (loopback-only; blocked externally by Traefik deny rule):**
@@ -192,7 +192,7 @@ Claude Code blocks hooks to non-localhost IPs. The relay (`scripts/relay.ts`) ru
 
 **Dashboard API:**
 - `GET /api/v1/auth/me` - Current identity; for `api_key` callers now includes `scopes: string[]` (AGEN-12) alongside the existing fields. Un-forwardauth'd by design (see Auth section).
-- `GET /api/v1/sessions` - List sessions (filterable by status, agent_type). Each row now includes a `managed: boolean` (AGEN-12) indicating whether a supervisor is holding a live process for it (i.e. whether prompt/stop/retry control actions can target it).
+- `GET /api/v1/sessions` - List sessions (filterable by status, agent_type). Each row now includes a `managed: boolean` (AGEN-12) indicating whether a supervisor is holding a live process for it (i.e. whether prompt/stop/retry control actions can target it), plus the nullable `lastAgentTurnCompletedAt` / `lastUserAcknowledgedAt` acknowledgement timestamps.
 - `GET /api/v1/sessions/stats` - Dashboard KPI stats
 - `GET /api/v1/projects` - List projects. `manage`-scoped only (AGEN-12, F23): the DTO carries arbitrary operator-set `notes`/`metadata` and a `githubRepoUrl` that may embed userinfo credentials, so it's excluded from the `observe` read tier.
 - `GET /api/v1/search?kinds=session&q=` - Search sessions/events (FTS5-backed)
@@ -220,7 +220,8 @@ Claude Code blocks hooks to non-localhost IPs. The relay (`scripts/relay.ts`) ru
 - SQLite datetime format: "YYYY-MM-DD HH:MM:SS" (no T/Z) -- use `parseDate()` (import from `src/web/lib/parseDate.ts`) in frontend
 - Session names generated from adjective-noun pairs (name-generator.ts)
 - DB migrations: SQLite fresh installs and all Postgres installs use Drizzle migrate (baselines in `drizzle/sqlite/` and `drizzle/postgres/`). Existing SQLite installs use the legacy `initializeDatabase()` path unless `AGENTPULSE_LEGACY_INIT=false`. Schema changes must generate two migrations in lockstep: `bun run db:generate:sqlite` and `bun run db:generate:postgres`.
-- isWorking toggles on UserPromptSubmit/PreToolUse (true) and Stop (false)
+- isWorking toggles on UserPromptSubmit/PreToolUse (true) and Stop (false); Stop also stamps `lastAgentTurnCompletedAt`, UserPromptSubmit and `UserAcknowledge` stamp `lastUserAcknowledgedAt` (`event-processor.ts`). Clients derive WAITING (turn newer than acknowledgement) vs IDLE from those two fields; `lastActivityAt` is not suitable because Notification and other hooks bump it.
+- Session identity is the CLI's `session_id` alone (UNIQUE; `onConflictDoNothing` on first insert, per-session FIFO in ingest.ts). Display names, cwd, project and agent type never participate.
 - Timeline shows only UserPromptSubmit events — this filter is applied **client-side** in the session detail UI, not server-side. The API returns all events for a session; the timeline component selects the subset to display.
 - `EventCategory` (`src/shared/types.ts`) includes `permission_event` for `PermissionRequest`/`PermissionDenied` — a first-class category, not the generic `system_event` else-branch, so the inbox/alert-rules can query them without content-string matching.
 - Permission-wait visibility: a session blocked on a permission prompt shows `semanticStatus = "waiting"` on the dashboard. State lives in `sessions.metadata.permissionWait` as `{ ids, anon, prevStatus }` (tool_use_id-keyed outstanding waits, anonymous fallback count, and the status to restore once all waits clear). Mutated by `applyPermissionWaitTransition` (`event-processor.ts`) via a late read-modify-write inside `withTransaction`, invoked unconditionally on `PermissionRequest` and every clear-capable event (`PermissionDenied`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionStart`). Ordering is best-effort and self-healing within one subsequent same-session boundary event, never restoring a stale `prevStatus` over a newer agent-reported status. See the plan's Decision 10 for the full state model.

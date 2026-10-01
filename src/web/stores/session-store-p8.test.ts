@@ -40,6 +40,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 		metadata: {},
 		projectId: null,
 		isArchived: false,
+		lastAgentTurnCompletedAt: null,
+		lastUserAcknowledgedAt: null,
 		...overrides,
 	};
 }

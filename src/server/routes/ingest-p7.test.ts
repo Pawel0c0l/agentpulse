@@ -440,9 +440,9 @@ describe("processHookEvent returns session row (no N+1 getSession)", () => {
 		expect(typeof result.isNew).toBe("boolean");
 		expect(result.session).not.toBeNull();
 		// session is the full DB row.
-		expect(result.session.sessionId).toBe(sessionId);
-		expect(typeof result.session.id).toBe("string");
-		expect(result.session.agentType).toBe("claude_code");
+		expect(result.session?.sessionId).toBe(sessionId);
+		expect(typeof result.session?.id).toBe("string");
+		expect(result.session?.agentType).toBe("claude_code");
 	});
 });
 

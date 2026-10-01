@@ -39,6 +39,11 @@ export const sessionsSqlite = sqliteTable("sessions", {
 	watcherLastRunAt: text("watcher_last_run_at"),
 	watcherLastUserPromptAt: text("watcher_last_user_prompt_at"),
 	aiSpendCents: integer("ai_spend_cents").notNull().default(0),
+	// Acknowledgement model (WAITING vs IDLE): when the agent last finished a
+	// turn (Stop) and when the user last acknowledged a result (UserPromptSubmit
+	// or UserAcknowledge). Both nullable; rows predating the columns stay null.
+	lastAgentTurnCompletedAt: text("last_agent_turn_completed_at"),
+	lastUserAcknowledgedAt: text("last_user_acknowledged_at"),
 });
 
 export const sessionsPg = pgTable("sessions", {
@@ -74,4 +79,6 @@ export const sessionsPg = pgTable("sessions", {
 	watcherLastRunAt: pgText("watcher_last_run_at"),
 	watcherLastUserPromptAt: pgText("watcher_last_user_prompt_at"),
 	aiSpendCents: pgInteger("ai_spend_cents").notNull().default(0),
+	lastAgentTurnCompletedAt: pgText("last_agent_turn_completed_at"),
+	lastUserAcknowledgedAt: pgText("last_user_acknowledged_at"),
 });

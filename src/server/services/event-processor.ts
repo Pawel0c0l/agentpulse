@@ -414,7 +414,7 @@ type SessionRow = typeof import("../db/schema/index.js").sessions.$inferSelect;
 export async function processHookEvent(
 	payload: HookEventPayload,
 	agentType: AgentType,
-): Promise<{ sessionId: string; isNew: boolean; session: SessionRow }> {
+): Promise<{ sessionId: string; isNew: boolean; session: SessionRow | null }> {
 	const sessionId = payload.session_id;
 	const eventType = payload.hook_event_name;
 	const now = new Date().toISOString();
@@ -428,8 +428,35 @@ export async function processHookEvent(
 
 	const isNew = existing.length === 0;
 
+	// Synthetic acknowledgement (relay-detected /copy): it records that the
+	// user looked at the latest result and nothing else. It never creates a
+	// session (an ack for an unknown/deleted session is dropped), never flips
+	// isWorking, never touches lifecycle status/endedAt, never clears a
+	// permission wait (it is not in PERMISSION_WAIT_EVENT_TYPES), and does not
+	// move lastAgentTurnCompletedAt. The timestamp is server receive time so
+	// it is comparable with the Stop-side timestamp (hooks and synthetic acks
+	// travel through the same FIFO relay queue, so arrival order is event
+	// order); the client-side `acknowledged_at` stays in the event payload.
+	if (eventType === "UserAcknowledge") {
+		if (isNew) return { sessionId, isNew: false, session: null };
+		const ackUpdates: Record<string, unknown> = { lastUserAcknowledgedAt: now };
+		if (existing[0]?.status !== "completed") ackUpdates.lastActivityAt = now;
+		await getDb().update(sessions).set(ackUpdates).where(eq(sessions.sessionId, sessionId));
+		await insertNormalizedEvents(sessionId, normalizeHookEvent(payload, agentType));
+		const [ackSession] = await getDb()
+			.select()
+			.from(sessions)
+			.where(eq(sessions.sessionId, sessionId))
+			.limit(1);
+		return { sessionId, isNew: false, session: ackSession ?? null };
+	}
+
 	if (isNew) {
-		// Create new session with a friendly display name
+		// Create new session with a friendly display name. `session_id` is
+		// UNIQUE; ingest.ts already serializes hooks per session, but the
+		// select-then-insert above is not atomic for direct/concurrent callers
+		// (or a second replica), so a lost race must not throw — the loser
+		// simply falls through to the UPDATE below like any later hook.
 		await getDb()
 			.insert(sessions)
 			.values({
@@ -443,7 +470,8 @@ export async function processHookEvent(
 				startedAt: now,
 				lastActivityAt: now,
 				metadata: {},
-			});
+			})
+			.onConflictDoNothing({ target: sessions.sessionId });
 	}
 
 	// Update session based on event type. Any event other than SessionEnd
@@ -467,12 +495,21 @@ export async function processHookEvent(
 		updates.isWorking = false;
 	}
 
-	// Track working state: agent is working between prompt/tool start and Stop
+	// Track working state: agent is working between prompt/tool start and Stop.
+	// A new prompt also acknowledges whatever the agent produced before it
+	// (the user necessarily interacted with the previous result), and Stop
+	// marks the agent turn as completed — the two timestamps the WAITING/IDLE
+	// distinction is derived from. lastActivityAt is deliberately not used
+	// for this: Notification and other hooks bump it too.
 	if (eventType === "UserPromptSubmit" || eventType === "PreToolUse") {
 		updates.isWorking = true;
 	}
+	if (eventType === "UserPromptSubmit") {
+		updates.lastUserAcknowledgedAt = now;
+	}
 	if (eventType === "Stop") {
 		updates.isWorking = false;
+		updates.lastAgentTurnCompletedAt = now;
 	}
 
 	// Increment tool use count for tool events

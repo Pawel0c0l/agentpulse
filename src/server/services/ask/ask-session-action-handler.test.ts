@@ -30,6 +30,8 @@ async function insertSession(id: string, overrides: Record<string, unknown> = {}
 			status: "active",
 			isWorking: false,
 			isArchived: false,
+			lastAgentTurnCompletedAt: null,
+			lastUserAcknowledgedAt: null,
 			lastActivityAt: now,
 			startedAt: now,
 			...overrides,
