@@ -72,6 +72,7 @@ function categorizeOversizeEventType(eventType: string): EventCategory {
 	}
 	if (eventType === "PermissionRequest" || eventType === "PermissionDenied")
 		return "permission_event";
+	if (eventType === "UserAcknowledge") return "user_ack";
 	if (
 		eventType === "TaskCreated" ||
 		eventType === "TaskCompleted" ||
@@ -307,6 +308,23 @@ export function normalizeHookEvent(
 			toolInput: payload.tool_input || null,
 			toolResponse,
 			rawPayload: shapeHookRawPayload(payload, eventType),
+		});
+	} else if (eventType === "UserAcknowledge") {
+		// Synthetic acknowledgement (see AgentPulseSyntheticEvent): one
+		// non-noise timeline row recording that the user looked at the latest
+		// result. Carries no tool fields; the client-side `acknowledged_at`
+		// and `source` stay in rawPayload.
+		normalized.push({
+			eventType,
+			category: "user_ack",
+			source: "observed_hook",
+			content: payload.source ? `Acknowledged by user (${payload.source})` : "Acknowledged by user",
+			isNoise: false,
+			providerEventType,
+			toolName: null,
+			toolInput: null,
+			toolResponse: null,
+			rawPayload: payload as unknown as Record<string, unknown>,
 		});
 	} else if (eventType === "PermissionRequest" || eventType === "PermissionDenied") {
 		normalized.push({

@@ -211,6 +211,12 @@ export interface Session {
 	metadata: Record<string, unknown>;
 	projectId: string | null;
 	isArchived: boolean;
+	// Acknowledgement model (WAITING vs IDLE): when the agent last finished a
+	// turn (Stop) and when the user last acknowledged a result. Optional for
+	// backward-compat with a server predating the columns; a current server
+	// always sends both (null until the session has seen the event).
+	lastAgentTurnCompletedAt?: string | null;
+	lastUserAcknowledgedAt?: string | null;
 	managedSession?: ManagedSession | null;
 	managed?: boolean;
 	// F86 (ian mid-build, D14/Phase 2): optional for backward-compat with a

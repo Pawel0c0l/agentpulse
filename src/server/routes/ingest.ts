@@ -517,6 +517,9 @@ function enqueueHookProcessing(
 
 			// Broadcast to WebSocket subscribers using the returned session row —
 			// no second DB read needed (eliminates the N+1 getSession() call).
+			// A null row means the event was dropped (UserAcknowledge for an
+			// unknown session): nothing changed, nothing to broadcast.
+			if (!session) return;
 			if (isNew) {
 				notifySessionCreated(session);
 			} else {

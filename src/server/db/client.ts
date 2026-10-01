@@ -946,6 +946,11 @@ async function runLegacySqliteInit(sqlite: Database): Promise<void> {
 		"ALTER TABLE sessions ADD COLUMN watcher_last_run_at TEXT",
 		"ALTER TABLE sessions ADD COLUMN watcher_last_user_prompt_at TEXT",
 		"ALTER TABLE sessions ADD COLUMN ai_spend_cents INTEGER NOT NULL DEFAULT 0",
+		// Acknowledgement model (WAITING vs IDLE): nullable, additive. Mirrors the
+		// drizzle migrations (sqlite 0006 / postgres 0007) for installs on the
+		// legacy init path.
+		"ALTER TABLE sessions ADD COLUMN last_agent_turn_completed_at TEXT",
+		"ALTER TABLE sessions ADD COLUMN last_user_acknowledged_at TEXT",
 		// Phase 5: template provenance (ai_distillation | null for manual).
 		"ALTER TABLE session_templates ADD COLUMN metadata TEXT",
 		// Phase 7 channel verification.

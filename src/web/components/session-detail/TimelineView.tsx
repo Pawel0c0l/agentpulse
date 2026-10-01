@@ -190,6 +190,8 @@ export function eventLabel(category: EventCategory | null): string {
 			return "System";
 		case "permission_event":
 			return "Permission";
+		case "user_ack":
+			return "Acknowledged";
 		case "ai_proposal_pending":
 			return "AI Proposal Pending";
 		case "ai_proposal":
